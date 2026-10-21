@@ -113,6 +113,7 @@ pub struct BulbState {
     pub hue: Option<f64>,
     pub saturation: Option<f64>,
     pub temperature: Option<u32>,
+    pub colour_mode: Option<String>,
     pub online: Option<bool>,
     pub timestamp: Option<String>,
     pub demo: bool,
@@ -125,6 +126,7 @@ impl Default for BulbState {
             hue: Some(0.0),
             saturation: Some(0.0),
             temperature: Some(5000),
+            colour_mode: Some("white".into()),
             online: Some(true),
             timestamp: None,
             demo: true,
@@ -340,6 +342,27 @@ impl App {
     async fn send(&self, commands: Vec<Value>) -> Result<Json<Value>, Error> {
         // Serialize writes without blocking tray or Kindle UI threads.
         let _guard = self.commands.lock().await;
+        self.send_locked(commands).await
+    }
+
+    async fn send_colour(&self, commands: Vec<Value>) -> Result<Json<Value>, Error> {
+        // Keep the colour request and optional wake atomic relative to other writes.
+        let _guard = self.commands.lock().await;
+        let was_off = self.read(true).await?.power == Some(false);
+        let accepted = self.send_locked(commands).await?;
+        if was_off {
+            if !self.config.demo {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            let _ = self
+                .send_locked(vec![self.command("switch", "on", vec![])])
+                .await?;
+        }
+        Ok(accepted)
+    }
+
+    // Caller owns the command mutex, including across colour/wake sequencing.
+    async fn send_locked(&self, commands: Vec<Value>) -> Result<Json<Value>, Error> {
         if self.config.demo {
             let mut state = self.demo.lock().await;
             for command in &commands {
@@ -515,19 +538,12 @@ fn rgb_commands(app: &App, r: u8, g: u8, b: u8) -> Vec<Value> {
     if v == 0.0 {
         return vec![app.command("switch", "off", vec![])];
     }
-    vec![
-        app.command(
-            "colorControl",
-            "setColor",
-            vec![json!({"hue":h,"saturation":s})],
-        ),
-        app.command(
-            "switchLevel",
-            "setLevel",
-            vec![json!((v * 100.0).round().max(1.0) as u8)],
-        ),
-        app.command("switch", "on", vec![]),
-    ]
+    vec![app.command(
+        "colorControl",
+        "setColor",
+        vec![json!({"hue":(h * 10000.0).round() / 10000.0,
+                    "saturation":(s * 10000.0).round() / 10000.0})],
+    )]
 }
 pub fn rgb_hsv(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     let (r, g, b) = (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
@@ -550,7 +566,12 @@ pub fn rgb_hsv(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
     )
 }
 async fn colour(State(app): State<Arc<App>>, Json(p): Json<Colour>) -> Result<Json<Value>, Error> {
-    app.send(rgb_commands(&app, p.r, p.g, p.b)).await
+    let commands = rgb_commands(&app, p.r, p.g, p.b);
+    if p.r == 0 && p.g == 0 && p.b == 0 {
+        app.send(commands).await
+    } else {
+        app.send_colour(commands).await
+    }
 }
 async fn temperature(
     State(app): State<Arc<App>>,
@@ -563,14 +584,11 @@ async fn temperature(
             "Supported presets: 2700 or 5000 kelvin",
         ));
     }
-    app.send(vec![
-        app.command(
-            "colorTemperature",
-            "setColorTemperature",
-            vec![json!(p.kelvin)],
-        ),
-        app.command("switch", "on", vec![]),
-    ])
+    app.send_colour(vec![app.command(
+        "colorTemperature",
+        "setColorTemperature",
+        vec![json!(p.kelvin)],
+    )])
     .await
 }
 async fn preset(State(app): State<Arc<App>>, Json(p): Json<Preset>) -> Result<Json<Value>, Error> {
@@ -579,17 +597,14 @@ async fn preset(State(app): State<Arc<App>>, Json(p): Json<Preset>) -> Result<Js
         "green" => rgb_commands(&app, 0, 255, 0),
         "blue" => rgb_commands(&app, 0, 0, 255),
         "purple" => rgb_commands(&app, 180, 0, 255),
-        "warm" | "white" => vec![
-            app.command(
-                "colorTemperature",
-                "setColorTemperature",
-                vec![json!(if p.name == "warm" { 2700 } else { 5000 })],
-            ),
-            app.command("switch", "on", vec![]),
-        ],
+        "warm" | "white" => vec![app.command(
+            "colorTemperature",
+            "setColorTemperature",
+            vec![json!(if p.name == "warm" { 2700 } else { 5000 })],
+        )],
         _ => return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, "Unknown preset")),
     };
-    app.send(commands).await
+    app.send_colour(commands).await
 }
 fn normalize(value: &Value) -> BulbState {
     let attr = |cap: &str, name: &str| value.get(cap).and_then(|v| v.get(name));
@@ -611,6 +626,21 @@ fn normalize(value: &Value) -> BulbState {
         temperature: val("colorTemperature", "colorTemperature")
             .and_then(Value::as_u64)
             .map(|v| v as u32),
+        colour_mode: {
+            let colour = [
+                attr("colorControl", "hue").and_then(|v| v["timestamp"].as_str()),
+                attr("colorControl", "saturation").and_then(|v| v["timestamp"].as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .max();
+            let white =
+                attr("colorTemperature", "colorTemperature").and_then(|v| v["timestamp"].as_str());
+            match (colour, white) {
+                (Some(a), Some(b)) => Some(if b > a { "white" } else { "colour" }.into()),
+                _ => None,
+            }
+        },
         online: val("healthCheck", "DeviceWatch-DeviceStatus")
             .and_then(Value::as_str)
             .and_then(|s| match s {
@@ -632,10 +662,12 @@ fn apply_demo(state: &mut BulbState, c: &Value) {
         "off" => state.power = Some(false),
         "setLevel" => state.brightness = first.as_u64().map(|v| v as u8),
         "setColor" => {
+            state.colour_mode = Some("colour".into());
             state.hue = first["hue"].as_f64();
             state.saturation = first["saturation"].as_f64();
         }
         "setColorTemperature" => {
+            state.colour_mode = Some("white".into());
             state.temperature = first.as_u64().map(|v| v as u32);
             state.saturation = Some(0.0);
         }

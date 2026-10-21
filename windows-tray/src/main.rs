@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod backend;
+mod control;
 mod credentials;
 #[cfg(windows)]
 mod panel;

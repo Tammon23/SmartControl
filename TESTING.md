@@ -43,3 +43,7 @@ Name editor update: themed input, Save and Cancel controls, Enter/Escape shortcu
 ## Native sign-in setup
 
 Nine Windows release tests passed. New tests verify the RFC 7636 PKCE challenge, mandatory OAuth state and duplicate-parameter rejection, compatible-device filtering, and a Windows DPAPI credential round trip with tamper rejection. Existing edit-control, rename, and toggle tests still pass. A live read-only check verified compatibility with the pre-existing connection before opening the browser setup test. Setup reads device information and does not issue bulb commands. The user completed end-to-end browser authorization, selected the bulb and saved the connection; the tray icon returned. A subsequent read-only check through the encrypted store succeeded and reported on at 50 percent.
+
+## Colour responsiveness update
+
+Thirteen native tray tests and eight server tests passed. New coverage checks single colour command payloads, accepted-result validation, queued latest colour selection without losing other controls, stale readback rejection, colour/white mode inference and server request sequencing. The user confirmed controlled green-to-blue changes and then rapid tray green/blue/red selections: the bulb and icon matched and controls stayed responsive. Sampled cloud requests returned HTTP 200, with no observed rate-limit response in these tests. The native client now reports HTTP 429 cooldowns, bounds confirmation polling and schedules one later refresh when needed. Oracle deployment remains unperformed.

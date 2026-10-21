@@ -54,6 +54,51 @@ async fn unauthorized_writes_never_change_state() {
     assert_eq!(code, StatusCode::OK);
     assert_eq!(value["power"], false);
 }
+
+#[test]
+fn newest_colour_or_temperature_event_determines_mode() {
+    let mut component = json!({
+        "colorControl": {
+            "hue":{"value":66.6667,"timestamp":"2026-10-20T12:00:00Z"},
+            "saturation":{"value":100,"timestamp":"2026-10-20T12:00:01Z"}
+        },
+        "colorTemperature":{"colorTemperature":{"value":5000,"timestamp":"2026-10-20T12:00:02Z"}}
+    });
+    let white = normalize(&component);
+    assert_eq!(white.colour_mode.as_deref(), Some("white"));
+    assert_eq!(white.saturation, Some(100.0)); // Stored colour is not the active mode.
+    component["colorControl"]["hue"]["timestamp"] = json!("2026-10-20T12:00:03Z");
+    assert_eq!(normalize(&component).colour_mode.as_deref(), Some("colour"));
+    component["colorControl"]["hue"]["timestamp"] = Value::Null;
+    component["colorControl"]["saturation"]["timestamp"] = Value::Null;
+    assert_eq!(normalize(&component).colour_mode, None);
+}
+
+#[tokio::test]
+async fn demo_mode_tracks_colour_then_white_without_changing_brightness() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::new(config(dir.path())).await.unwrap();
+    let key = "k".repeat(32);
+    for (name, mode) in [("blue", "colour"), ("white", "white"), ("green", "colour")] {
+        assert_eq!(
+            request(
+                app.clone(),
+                "POST",
+                "/api/bulb/preset",
+                &key,
+                json!({"name":name})
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let state = request(app.clone(), "GET", "/api/bulb", &key, Value::Null)
+            .await
+            .1;
+        assert_eq!(state["colour_mode"], mode);
+        assert_eq!(state["brightness"], 50);
+    }
+}
 #[tokio::test]
 async fn malformed_inputs_do_not_mutate_the_bulb() {
     let dir = tempfile::tempdir().unwrap();
@@ -91,6 +136,14 @@ async fn both_clients_share_state_and_colour_changes_are_consistent() {
     let app = App::new(config(dir.path())).await.unwrap();
     let w = "w".repeat(32);
     let k = "k".repeat(32);
+    request(
+        app.clone(),
+        "POST",
+        "/api/bulb/brightness",
+        &w,
+        json!({"percent":17}),
+    )
+    .await;
     let result = request(
         app.clone(),
         "POST",
@@ -104,7 +157,7 @@ async fn both_clients_share_state_and_colour_changes_are_consistent() {
         .await
         .1;
     assert_eq!(state["power"], true);
-    assert_eq!(state["brightness"], 50);
+    assert_eq!(state["brightness"], 17);
     assert!((state["hue"].as_f64().unwrap() - 100.0 / 3.0).abs() < 0.01);
     request(
         app.clone(),
@@ -130,19 +183,22 @@ async fn both_clients_share_state_and_colour_changes_are_consistent() {
 #[derive(Default)]
 struct Mock {
     commands: Mutex<Vec<Value>>,
+    command_times: Mutex<Vec<Instant>>,
+    on: AtomicBool,
     refreshes: AtomicUsize,
     reject: AtomicBool,
 }
 async fn mock_upstream() -> (String, Arc<Mock>, tokio::task::JoinHandle<()>) {
     let mock = Arc::new(Mock::default());
     let routes=Router::new()
-        .route("/devices/{id}/status",get(|State(_m):State<Arc<Mock>>,headers:HeaderMap|async move{
+        .route("/devices/{id}/status",get(|State(m):State<Arc<Mock>>,headers:HeaderMap|async move{
             if bearer(&headers)!=Some("new-access") {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
-            (StatusCode::OK,Json(json!({"components":{"main":{"switch":{"switch":{"value":"off","timestamp":"2026-10-20T12:00:00Z"}},"switchLevel":{"level":{"value":50}},"healthCheck":{"DeviceWatch-DeviceStatus":{"value":"online"}}}}})))
+            (StatusCode::OK,Json(json!({"components":{"main":{"switch":{"switch":{"value":if m.on.load(Ordering::SeqCst) {"on"} else {"off"},"timestamp":"2026-10-20T12:00:00Z"}},"switchLevel":{"level":{"value":50}},"healthCheck":{"DeviceWatch-DeviceStatus":{"value":"online"}}}}})))
         }))
         .route("/devices/{id}/commands",post(|State(m):State<Arc<Mock>>,headers:HeaderMap,Json(body):Json<Value>|async move{
             if bearer(&headers)!=Some("new-access") {return (StatusCode::UNAUTHORIZED,Json(json!({})));}
             m.commands.lock().await.push(body.clone());
+            m.command_times.lock().await.push(Instant::now());
             if m.reject.load(Ordering::SeqCst) {return (StatusCode::SERVICE_UNAVAILABLE,Json(json!({"error":"contains private upstream detail"})));}
             let results:Vec<_>=body["commands"].as_array().unwrap().iter().map(|_|json!({"status":"ACCEPTED"})).collect();
             (StatusCode::OK,Json(json!({"results":results})))
@@ -228,12 +284,74 @@ async fn upstream_commands_have_correct_shape_and_failures_are_not_success() {
     let sent = mock.commands.lock().await;
     assert_eq!(sent[0]["commands"][0]["capability"], "colorControl");
     assert_eq!(sent[0]["commands"][0]["arguments"][0]["hue"], 0.0);
-    assert_eq!(sent[0]["commands"][2]["command"], "on");
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["commands"].as_array().unwrap().len(), 1);
+    assert_eq!(sent[1]["commands"].as_array().unwrap().len(), 1);
+    assert_eq!(sent[1]["commands"][0]["command"], "on");
+    drop(sent);
+    let times = mock.command_times.lock().await;
+    assert!(times[1].duration_since(times[0]) >= Duration::from_millis(500));
+    drop(times);
+    mock.on.store(true, Ordering::SeqCst);
+    for (route, body) in [
+        ("preset", json!({"name":"blue"})),
+        ("preset", json!({"name":"warm"})),
+        ("temperature", json!({"kelvin":5000})),
+        ("colour", json!({"r":0,"g":0,"b":0})),
+    ] {
+        assert_eq!(
+            request(
+                app.clone(),
+                "POST",
+                &format!("/api/bulb/{route}"),
+                &key,
+                body
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    let sent = mock.commands.lock().await;
+    assert_eq!(sent.len(), 6); // Already-on colours and black each send exactly one command.
+    assert_eq!(sent[2]["commands"][0]["command"], "setColor");
+    assert_eq!(sent[2]["commands"][0]["arguments"][0]["hue"], 66.6667);
+    assert_eq!(sent[3]["commands"][0]["command"], "setColorTemperature");
+    assert_eq!(sent[4]["commands"][0]["command"], "setColorTemperature");
+    assert_eq!(sent[5]["commands"][0]["command"], "off");
+    assert!(sent
+        .iter()
+        .all(|batch| batch["commands"].as_array().unwrap().len() == 1));
+    assert!(sent
+        .iter()
+        .all(|batch| batch["commands"][0]["command"] != "setLevel"));
     drop(sent);
     mock.reject.store(true, Ordering::SeqCst);
-    let result = request(app, "POST", "/api/bulb/power", &key, json!({"on":false})).await;
+    let result = request(
+        app.clone(),
+        "POST",
+        "/api/bulb/power",
+        &key,
+        json!({"on":false}),
+    )
+    .await;
     assert_eq!(result.0, StatusCode::BAD_GATEWAY);
     assert!(!result.1.to_string().contains("private upstream"));
+    mock.on.store(false, Ordering::SeqCst);
+    let before = mock.commands.lock().await.len();
+    assert_eq!(
+        request(
+            app,
+            "POST",
+            "/api/bulb/preset",
+            &key,
+            json!({"name":"green"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_GATEWAY
+    );
+    assert_eq!(mock.commands.lock().await.len(), before + 1); // No wake or retry after rejected colour.
     task.abort();
 }
 

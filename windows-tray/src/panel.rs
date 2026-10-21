@@ -833,9 +833,6 @@ unsafe extern "system" fn procedure(
                 begin_rename();
                 return 0;
             }
-            if busy() {
-                return 0;
-            }
             if (24..=336).contains(&x) && (80..=188).contains(&y) {
                 crate::tray::enqueue(owner(), Action::Toggle);
             } else if (16..=344).contains(&x) && (236..=280).contains(&y) {

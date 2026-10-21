@@ -18,6 +18,7 @@ use windows_sys::Win32::{
 const TRAY: u32 = WM_APP + 1;
 const RESULT: u32 = WM_APP + 2;
 static CHOOSING: AtomicBool = AtomicBool::new(false);
+static PENDING: Mutex<crate::control::Pending> = Mutex::new(crate::control::Pending::new());
 static JOBS: OnceLock<SyncSender<Action>> = OnceLock::new();
 static LAST: Mutex<String> = Mutex::new(String::new());
 static LABEL: OnceLock<String> = OnceLock::new();
@@ -250,8 +251,8 @@ pub unsafe fn choose_colour(hwnd: HWND) -> Option<Action> {
     }
 }
 pub fn enqueue(hwnd: HWND, action: Action) {
-    if crate::panel::busy() {
-        return;
+    unsafe {
+        KillTimer(hwnd, 2);
     }
     let action = if matches!(action, Action::Toggle) {
         crate::panel::recent_power()
@@ -260,6 +261,11 @@ pub fn enqueue(hwnd: HWND, action: Action) {
     } else {
         action
     };
+    if crate::panel::busy() {
+        PENDING.lock().unwrap().push(action);
+        crate::panel::update(None, "Latest change queued…".into(), true, false);
+        return;
+    }
     crate::panel::update(None, "Working…".into(), true, false);
     if JOBS.get().unwrap().try_send(action).is_err() {
         crate::panel::update(None, "Request unavailable. Try again.".into(), false, true);
@@ -298,14 +304,16 @@ unsafe extern "system" fn wndproc(
                 false,
                 !result.ok,
             );
-            refresh_icon(result.state.as_ref());
+            if result.state.is_some() {
+                refresh_icon(result.state.as_ref());
+            }
             *LAST.lock().unwrap() = result.message.clone();
             let tip = format!(
                 "Bulb Bridge: {}",
                 result.message.lines().next().unwrap_or("Ready")
             );
             Shell_NotifyIconW(NIM_MODIFY, &icon(hwnd, &tip));
-            if !result.ok || result.show {
+            if result.show {
                 MessageBoxW(
                     hwnd,
                     wide(&result.message).as_ptr(),
@@ -318,6 +326,18 @@ unsafe extern "system" fn wndproc(
                         },
                 );
             }
+            if result.message.starts_with("Sent; confirmation delayed") {
+                SetTimer(hwnd, 2, 5000, None);
+            }
+            let next = PENDING.lock().unwrap().pop();
+            if let Some(action) = next {
+                enqueue(hwnd, action);
+            }
+            0
+        }
+        WM_TIMER if wparam == 2 => {
+            KillTimer(hwnd, 2);
+            enqueue(hwnd, Action::Refresh);
             0
         }
         WM_DESTROY => {
@@ -418,7 +438,15 @@ pub fn run() -> Result<(), String> {
         crate::panel::create(hwnd, &config.label)?;
         let hwnd_value = hwnd as usize;
         std::thread::spawn(move || {
-            for action in rx {
+            let mut previous = None::<crate::backend::Snapshot>;
+            let mut last_write = None::<std::time::Instant>;
+            for mut action in rx {
+                if matches!(action, Action::Toggle) {
+                    if let Some(on) = previous.as_ref().and_then(|s| s.power) {
+                        action = Action::Power(!on);
+                    }
+                }
+
                 let show = matches!(action, Action::Status);
                 let read = matches!(action, Action::Status | Action::Refresh);
                 let (ok, message, state) = if read {
@@ -434,14 +462,55 @@ pub fn run() -> Result<(), String> {
                         Err(e) => (false, e, None),
                     }
                 } else {
-                    match controller.execute(action) {
-                        Ok(message) => match controller.snapshot() {
-                            Ok(s) => (true, "Connected".into(), Some(s)),
-                            Err(_) => (true, format!("{message}. Refresh to check state."), None),
-                        },
-                        Err(e) => (false, e, None),
+                    if let Some(last) = last_write {
+                        std::thread::sleep(
+                            std::time::Duration::from_millis(750).saturating_sub(last.elapsed()),
+                        );
+                    }
+                    let wake = if crate::control::is_colour(&action)
+                        && previous.as_ref().and_then(|s| s.power) == Some(false)
+                    {
+                        controller.execute(Action::Power(true)).map(|_| {
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                        })
+                    } else {
+                        Ok(())
+                    };
+                    let outcome = wake.and_then(|_| controller.execute(action.clone()));
+                    last_write = Some(std::time::Instant::now());
+                    match outcome {
+                        Ok(_) => {
+                            let mut latest = None;
+                            let mut confirmed = false;
+                            for delay in [350, 700, 1200, 1800] {
+                                std::thread::sleep(std::time::Duration::from_millis(delay));
+                                match controller.snapshot() {
+                                    Ok(state) => {
+                                        confirmed = crate::control::matches(&action, &state);
+                                        latest = Some(state);
+                                        if confirmed {
+                                            break;
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                            (
+                                true,
+                                if confirmed {
+                                    "Connected".into()
+                                } else {
+                                    "Sent; confirmation delayed. Refresh to check.".into()
+                                },
+                                latest,
+                            )
+                        }
+                        Err(error) => (false, error, None),
                     }
                 };
+                if let Some(ref snapshot) = state {
+                    previous = Some(snapshot.clone());
+                }
                 let message = Box::new(Reply {
                     ok,
                     message,

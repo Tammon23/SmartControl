@@ -15,7 +15,7 @@ Use HTTPS through a reverse proxy on Oracle. Keep the raw server port private. N
 | POST | `/api/bulb/temperature` | `{"kelvin":5000}`; only 2700 and 5000 presets exposed |
 | POST | `/api/bulb/preset` | `{"name":"red"}`; red, green, blue, purple, warm, white |
 
-Colour requests convert RGB to HSV, apply hue/saturation and brightness, and request on. RGB black requests off. White presets select temperature and request on. Brightness alone does not explicitly send on. Setting brightness to zero is not a substitute for the off command.
+Colour requests convert RGB to hue/saturation and preserve the current brightness. RGB black requests off. White presets select temperature and preserve brightness. Colour and white requests read power first; if it is off, they send a separate on command after the colour command is accepted, with a 500 ms gap. They do not send on when power is already on or unknown. A failed read prevents the write; a failed wake can leave the colour changed while power remains off. Requests are never automatically retried. Use the brightness endpoint to change the level explicitly; it does not explicitly send on. Setting brightness to zero is not a substitute for the off command.
 
 An accepted command returns HTTP 200:
 
@@ -40,7 +40,7 @@ Example status (nullable values indicate unknown attributes):
 }
 ```
 
-`timestamp` is the upstream **power attribute** timestamp, not the timestamp of every field or a guarantee that data is fresh. `temperature` can retain its previous white setting while colour mode is active. `online` can be unknown and depends on the integration's health reporting.
+`timestamp` is the upstream **power attribute** timestamp, not the timestamp of every field or a guarantee that data is fresh. `temperature` can retain its previous white setting while colour mode is active. The additive `colour_mode` field is `white`, `colour`, or null: it infers the active mode from the newest colour versus temperature event timestamp when both are available. Hue and saturation can also retain old values in white mode. `online` can be unknown and depends on the integration's health reporting.
 
 ## Example
 

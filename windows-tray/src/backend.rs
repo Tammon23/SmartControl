@@ -1,6 +1,10 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 #[derive(Deserialize, Clone)]
 pub struct Config {
@@ -43,6 +47,7 @@ pub struct Snapshot {
     pub hue: Option<f64>,
     pub saturation: Option<f64>,
     pub temperature: Option<u32>,
+    pub colour_mode: Option<String>,
     pub online: Option<bool>,
     pub timestamp: Option<String>,
     #[serde(default)]
@@ -71,7 +76,7 @@ impl Snapshot {
         )
     }
     pub fn rgb(&self) -> (u8, u8, u8) {
-        if self.saturation.unwrap_or(0.0) < 5.0 {
+        if self.colour_mode.as_deref() == Some("white") || self.saturation.unwrap_or(0.0) < 5.0 {
             return if self.temperature.unwrap_or(5000) < 4000 {
                 (255, 190, 92)
             } else {
@@ -97,6 +102,7 @@ impl Snapshot {
 pub struct Controller {
     config: Config,
     http: reqwest::blocking::Client,
+    cooldown: Mutex<Option<Instant>>,
 }
 impl Controller {
     pub fn new(config: Config) -> Result<Self, String> {
@@ -135,7 +141,11 @@ impl Controller {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Cannot create HTTP client")?;
-        Ok(Self { config, http })
+        Ok(Self {
+            config,
+            http,
+            cooldown: Mutex::new(None),
+        })
     }
 
     pub fn execute(&self, action: Action) -> Result<String, String> {
@@ -181,7 +191,9 @@ impl Controller {
             }
             Backend::DirectCloud { component, .. } => {
                 let batch:Vec<Value>=commands(&action).into_iter().map(|(cap,command,args)|json!({"component":component,"capability":cap,"command":command,"arguments":args})).collect();
-                self.direct_request(Some(json!({"commands":batch})))?;
+                let expected = batch.len();
+                let reply = self.direct_request(Some(json!({"commands":batch})))?;
+                accepted(&reply, expected)?;
                 Ok("Command accepted".into())
             }
         }
@@ -243,6 +255,22 @@ impl Controller {
                     timestamp: c["switch"]["switch"]["timestamp"]
                         .as_str()
                         .map(str::to_string),
+                    colour_mode: {
+                        let colour = [
+                            c["colorControl"]["hue"]["timestamp"].as_str(),
+                            c["colorControl"]["saturation"]["timestamp"].as_str(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .max();
+                        let white = c["colorTemperature"]["colorTemperature"]["timestamp"].as_str();
+                        match (colour, white) {
+                            (Some(a), Some(b)) => {
+                                Some(if b > a { "white" } else { "colour" }.into())
+                            }
+                            _ => None,
+                        }
+                    },
                     demo: false,
                 })
             }
@@ -250,6 +278,14 @@ impl Controller {
     }
 
     fn direct_request(&self, body: Option<Value>) -> Result<Value, String> {
+        if let Some(until) = *self.cooldown.lock().unwrap() {
+            if until > Instant::now() {
+                return Err(format!(
+                    "Rate limited. Try again in {} seconds.",
+                    until.saturating_duration_since(Instant::now()).as_secs() + 1
+                ));
+            }
+        }
         let Backend::DirectCloud {
             credentials_path,
             device_id,
@@ -304,6 +340,29 @@ impl Controller {
             .bearer_auth(token)
             .send()
             .map_err(|_| "Light connection timed out")?;
+        if response.status().as_u16() == 429 {
+            let wait = response
+                .headers()
+                .get("retry-after")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(Duration::from_secs)
+                .or_else(|| {
+                    response
+                        .headers()
+                        .get("x-ratelimit-reset")
+                        .and_then(|h| h.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .map(Duration::from_millis)
+                })
+                .unwrap_or(Duration::from_secs(60))
+                .clamp(Duration::from_secs(1), Duration::from_secs(900));
+            *self.cooldown.lock().unwrap() = Some(Instant::now() + wait);
+            return Err(format!(
+                "Rate limited. Try again in {} seconds.",
+                wait.as_secs() + 1
+            ));
+        }
         if !response.status().is_success() {
             return Err(format!(
                 "Light service returned HTTP {}",
@@ -314,6 +373,15 @@ impl Controller {
     }
 }
 
+fn accepted(reply: &Value, expected: usize) -> Result<(), String> {
+    let results = reply["results"]
+        .as_array()
+        .ok_or("Command response did not include acceptance results")?;
+    if results.len() != expected || results.iter().any(|r| r["status"] != "ACCEPTED") {
+        return Err("The light service rejected one or more commands. Refresh and retry.".into());
+    }
+    Ok(())
+}
 pub fn bridge_request(action: &Action) -> (&'static str, Value) {
     match action {
         Action::Power(on) => ("/api/bulb/power", json!({"on":on})),
@@ -344,33 +412,24 @@ pub fn commands(action: &Action) -> Vec<(&'static str, &'static str, Vec<Value>)
             } else {
                 (r - g) / delta + 4.0
             };
-            vec![
-                (
-                    "colorControl",
-                    "setColor",
-                    vec![json!({"hue":h/6.0*100.0,"saturation":delta/max*100.0})],
-                ),
-                (
-                    "switchLevel",
-                    "setLevel",
-                    vec![json!((max * 100.0).round().max(1.0) as u8)],
-                ),
-                ("switch", "on", vec![]),
-            ]
+            vec![(
+                "colorControl",
+                "setColor",
+                vec![
+                    json!({"hue":(h/6.0*100.0*10000.0).round()/10000.0,"saturation":(delta/max*100.0*10000.0).round()/10000.0}),
+                ],
+            )]
         }
         Action::Preset(name) => match *name {
             "red" => commands(&Action::Colour(255, 0, 0)),
             "green" => commands(&Action::Colour(0, 255, 0)),
             "blue" => commands(&Action::Colour(0, 0, 255)),
             "purple" => commands(&Action::Colour(180, 0, 255)),
-            "warm" | "white" => vec![
-                (
-                    "colorTemperature",
-                    "setColorTemperature",
-                    vec![json!(if *name == "warm" { 2700 } else { 5000 })],
-                ),
-                ("switch", "on", vec![]),
-            ],
+            "warm" | "white" => vec![(
+                "colorTemperature",
+                "setColorTemperature",
+                vec![json!(if *name == "warm" { 2700 } else { 5000 })],
+            )],
             _ => vec![],
         },
         Action::Status | Action::Refresh | Action::Toggle => vec![],
@@ -455,5 +514,23 @@ mod toggle_tests {
             .unwrap_err()
             .contains("Power state is unavailable"));
         worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod colour_tests {
+    use super::*;
+    #[test]
+    fn colour_does_not_send_competing_brightness_or_power_commands() {
+        let c = commands(&Action::Preset("blue"));
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].0, "colorControl");
+        assert!((c[0].2[0]["hue"].as_f64().unwrap() - 66.6667).abs() < 0.0001);
+    }
+    #[test]
+    fn partial_or_rejected_commands_are_not_reported_as_accepted() {
+        assert!(accepted(&json!({"results":[{"status":"FAILED"}]}), 1).is_err());
+        assert!(accepted(&json!({"results":[{"status":"ACCEPTED"}]}), 2).is_err());
+        assert!(accepted(&json!({"results":[{"status":"ACCEPTED"}]}), 1).is_ok());
     }
 }

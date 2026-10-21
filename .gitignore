@@ -18,3 +18,8 @@ __pycache__/
 !.env.example
 SHA256SUMS.txt
 *.zip
+
+**/auth.bin
+*.pending
+
+/artifacts/

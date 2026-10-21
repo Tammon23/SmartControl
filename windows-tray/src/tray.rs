@@ -160,6 +160,7 @@ unsafe fn popup(hwnd: HWND) {
     AppendMenuW(menu, MF_POPUP, colours as usize, wide("Colour").as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     add(menu, 6, "Rename bulb...");
+    add(menu, 7, "Connect / change account...");
     add(menu, 3, "Read status");
     add(menu, 4, "About / connection");
     add(menu, 5, "Quit");
@@ -180,6 +181,23 @@ unsafe fn popup(hwnd: HWND) {
     let action = match id {
         1 => Some(Action::Toggle),
         2 => Some(Action::Power(false)),
+        7 => {
+            if let Ok(exe) = std::env::current_exe() {
+                use std::os::windows::process::CommandExt;
+                let mut command = std::process::Command::new(exe);
+                command.arg("--setup");
+                if let Some(path) = CONFIG_PATH.get() {
+                    command.arg(path);
+                }
+                match command.creation_flags(0x08000000).spawn() {
+                    Ok(_) => {
+                        DestroyWindow(hwnd);
+                    }
+                    Err(_) => show_error("Cannot open account setup"),
+                }
+            }
+            None
+        }
         6 => {
             crate::panel::begin_rename();
             None
@@ -331,11 +349,17 @@ pub fn rename(label: &str) -> Result<(), String> {
     Ok(())
 }
 pub fn run() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|_| "Cannot locate executable")?;
-    let path = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| exe.with_file_name("client.json"));
+    let force = std::env::args().nth(1).as_deref() == Some("--setup");
+    let explicit = std::env::args_os().nth(if force { 2 } else { 1 });
+    let path = match explicit {
+        Some(path) => PathBuf::from(path),
+        None => crate::setup::default_config()?,
+    };
+    if force || !path.exists() {
+        if !crate::setup::run(&path)? {
+            return Ok(());
+        }
+    }
     let config: Config = serde_json::from_slice(
         &std::fs::read(&path).map_err(|_| "Put client.json beside bulb-tray.exe (see README)")?,
     )

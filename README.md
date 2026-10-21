@@ -4,9 +4,9 @@ A native Windows tray app and a Rust server for Linux for your existing Wi-Fi bu
 
 ## Start with Windows
 
-Open **windows/bulb-tray.exe**. The yellow bulb icon provides power, brightness presets, colour presets, and the Windows colour picker. Keep `libunwind.dll` and `client.json` beside it. See [Windows instructions](windows/START-HERE.md).
+Download the Windows ZIP from [Releases](https://github.com/Tammon23/SmartControl/releases), extract it, and run **SmartControl.exe**. Connect your account and select your bulb when setup opens. See [Windows instructions](windows/START-HERE.md).
 
-The application uses direct Rust HTTP requests and native sign-in renewal. It has no Node.js, Python, CLI or WebView dependency. Its existing authorization was migrated into a private local app-data file. The panel supports a bulb toggle, brightness slider, colour swatches and a saved local name.
+The application uses direct Rust HTTP requests and native sign-in renewal. It has no Node.js, Python, CLI or WebView dependency. On first launch, connect your account in the browser and select a bulb. Credentials are encrypted for your Windows user account. The panel supports a bulb toggle, brightness slider, colour swatches and a saved local name.
 
 ## Build from source
 
@@ -23,4 +23,4 @@ Windows with a normal Rust MSVC toolchain and Visual Studio C++ Build Tools:
 cargo build --locked --release -p bulb-tray
 ```
 
-The included Windows executable was built with Rust's GNU/LLVM toolchain; its included `libunwind.dll` is required. An MSVC build may have different runtime requirements. Release builds enable size optimization, LTO and symbol stripping. No exact size or latency guarantee is made.
+The release workflow builds a portable Windows x64 executable with MSVC and a static C runtime. Release builds enable size optimization, LTO and symbol stripping. See [release instructions](RELEASING.md) to publish a new compiled download.

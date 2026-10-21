@@ -46,7 +46,7 @@ struct View {
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
-fn rgb(r: u8, g: u8, b: u8) -> u32 {
+pub(crate) fn rgb(r: u8, g: u8, b: u8) -> u32 {
     r as u32 | ((g as u32) << 8) | ((b as u32) << 16)
 }
 fn owner() -> HWND {
@@ -291,7 +291,7 @@ pub unsafe fn toggle_visibility() {
     }
 }
 
-unsafe fn fill(dc: HDC, rect: RECT, colour: u32, radius: i32) {
+pub(crate) unsafe fn fill(dc: HDC, rect: RECT, colour: u32, radius: i32) {
     let brush = CreateSolidBrush(colour);
     let old = SelectObject(dc, brush);
     let pen = SelectObject(dc, GetStockObject(NULL_PEN));
@@ -329,7 +329,15 @@ unsafe fn line(dc: HDC, x: i32, y: i32, x2: i32, y2: i32, colour: u32, width: i3
     SelectObject(dc, old);
     DeleteObject(pen);
 }
-unsafe fn text(dc: HDC, value: &str, rect: RECT, size: i32, weight: i32, colour: u32, flags: u32) {
+pub(crate) unsafe fn text(
+    dc: HDC,
+    value: &str,
+    rect: RECT,
+    size: i32,
+    weight: i32,
+    colour: u32,
+    flags: u32,
+) {
     let font = CreateFontW(
         -size,
         0,
@@ -361,7 +369,7 @@ unsafe fn text(dc: HDC, value: &str, rect: RECT, size: i32, weight: i32, colour:
     SelectObject(dc, old);
     DeleteObject(font);
 }
-fn rect(l: i32, t: i32, r: i32, b: i32) -> RECT {
+pub(crate) fn rect(l: i32, t: i32, r: i32, b: i32) -> RECT {
     RECT {
         left: l,
         top: t,

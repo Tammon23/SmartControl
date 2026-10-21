@@ -1,7 +1,10 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod backend;
+mod credentials;
 #[cfg(windows)]
 mod panel;
+#[cfg(windows)]
+mod setup;
 #[cfg(windows)]
 mod tray;
 fn main() {

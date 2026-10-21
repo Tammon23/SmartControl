@@ -258,10 +258,7 @@ impl Controller {
         else {
             unreachable!()
         };
-        let mut auth: Value = serde_json::from_slice(
-            &std::fs::read(credentials_path).map_err(|_| "Cannot read sign-in credentials")?,
-        )
-        .map_err(|_| "Invalid sign-in credentials")?;
+        let mut auth: Value = crate::credentials::load(credentials_path)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -292,8 +289,7 @@ impl Controller {
                 auth["refresh_token"] = json!(refresh);
             }
             auth["expires_at"] = json!(now + token["expires_in"].as_u64().unwrap_or(3600));
-            std::fs::write(credentials_path, serde_json::to_vec(&auth).unwrap())
-                .map_err(|_| "Cannot save renewed sign-in")?;
+            crate::credentials::save(credentials_path, &auth)?;
         }
         let token = auth["access_token"]
             .as_str()

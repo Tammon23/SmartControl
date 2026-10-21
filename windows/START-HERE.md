@@ -1,6 +1,6 @@
 # Windows bulb controller
 
-Keep bulb-tray.exe, libunwind.dll and client.json together. Left-click the notification-area bulb to open the graphical controls. Right-click for the menu and Quit.
+For a release download, extract the ZIP and run SmartControl.exe. First launch opens account setup. Left-click the notification-area bulb to open the graphical controls. Right-click for the menu, account setup and Quit. The local GNU development build is named bulb-tray.exe and also needs its libunwind.dll; release builds use MSVC and do not require that DLL.
 
 ## Controls
 
@@ -12,11 +12,21 @@ Click the bulb name, or right-click the tray icon and choose Rename bulb. The ed
 
 Escape, the close button or clicking elsewhere hides the panel. Requests run on a worker thread. The app reads back reported state after commands; cloud acceptance is not physical confirmation. There is no continuous background polling.
 
+## First-time connection
+
+Launch the app and click Connect account. Your default browser opens the account provider's official authorization page. Sign in and review access, then return to SmartControl, select your bulb and click Save connection. Setup only reads the device list; it does not change the bulb.
+
+Right-click the tray icon and choose Connect / change account to authorize again or select another bulb. Closing setup cancels the attempt. Browser authorization expires after ten minutes, and errors can be retried.
+
+The desktop integration currently uses the provider's public PKCE registration also used by its official CLI. The consent screen may identify that registration as SmartThings CLI. No CLI or Node process is run, and no client secret is embedded. This registration is provider-controlled; an independent production OAuth registration is a separate deployment consideration.
+
 ## Native Rust connection
 
-The current backend is direct_cloud. All normal requests and automatic sign-in renewal run in Rust. The application does not start Node.js, Python or a cloud CLI. Colour commands are batched into one HTTP request. The original sign-in was migrated from the prior setup.
+All normal requests, browser callback handling and automatic renewal run in Rust. The app has no Node.js, Python or cloud CLI runtime dependency. It verifies a random OAuth state value and uses PKCE before exchanging an authorization code.
 
-client.json contains the device ID and a path to the sign-in file under your Windows local app data, normally %LOCALAPPDATA%/BulbBridge/auth.json. That file contains account credentials: keep it private. It is excluded from the download archives. The ZIP is therefore not a signed-in installation for another computer. If sign-in is revoked or its refresh token expires, the account must be authorized again. A first-time sign-in screen is not included in the tray app yet.
+New connections store encrypted credentials in %LOCALAPPDATA%/SmartControl/auth.bin using Windows DPAPI for the signed-in Windows user. The app stores non-secret device settings in %LOCALAPPDATA%/SmartControl/client.json on a fresh installation. Existing portable client.json files remain supported; reconnecting updates that file. Keep authentication files private; they are not included in Git or release archives. Legacy plaintext sign-in files remain readable; renewed tokens are saved encrypted.
+
+If you move the app to another Windows account or computer, connect the account again. Automatic renewal avoids repeated browser sign-in while the provider's authorization remains valid. Revoked or expired renewal access requires reconnecting from the tray menu.
 
 ## Linux server later
 
@@ -24,7 +34,7 @@ Quit the app, change client.json to the structure in client.server.example.json 
 
 ## Start at sign-in
 
-Press Win+R, enter shell:startup, and put a shortcut to bulb-tray.exe in that folder. No startup entry is installed automatically.
+Press Win+R, enter shell:startup, and put a shortcut to SmartControl.exe in that folder. No startup entry is installed automatically.
 
 ## Measurement
 

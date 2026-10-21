@@ -1,0 +1,17 @@
+services:
+  bridge:
+    build: .
+    image: bulb-bridge:local
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - bridge_data:/app/data
+    ports:
+      - "127.0.0.1:8787:8787"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+volumes:
+  bridge_data:

@@ -1,0 +1,5 @@
+{
+  "client_id": "YOUR_OWN_SMARTTHINGS_APP_CLIENT_ID",
+  "client_secret": "YOUR_OWN_SMARTTHINGS_APP_CLIENT_SECRET",
+  "redirect_uri": "https://bulb.example.com/oauth/callback"
+}

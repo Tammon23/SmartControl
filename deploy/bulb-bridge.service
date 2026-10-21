@@ -1,0 +1,21 @@
+[Unit]
+Description=Bulb Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bulbbridge
+Group=bulbbridge
+WorkingDirectory=/opt/bulb-bridge
+ExecStart=/usr/local/bin/bulb-server /opt/bulb-bridge/config.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bulb-bridge/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

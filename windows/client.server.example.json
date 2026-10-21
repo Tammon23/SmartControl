@@ -1,0 +1,6 @@
+{
+  "label": "Bedroom bulb",
+  "backend": "bridge",
+  "server_url": "https://bulb.example.com",
+  "access_key": "CHANGE_TO_THE_WINDOWS_CLIENT_KEY_FROM_YOUR_SERVER"
+}

@@ -1,0 +1,10 @@
+# Run Caddy on the Oracle host. Set DNS and open TCP 80/443 in both the
+# Oracle network security rules and host firewall. Port 8787 stays private.
+bulb.example.com {
+    reverse_proxy 127.0.0.1:8787
+    header {
+        Cache-Control "no-store"
+        Referrer-Policy "no-referrer"
+        X-Content-Type-Options "nosniff"
+    }
+}

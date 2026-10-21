@@ -1,0 +1,8 @@
+target
+windows
+config.json
+client.json
+data
+*.zip
+.git
+licenses

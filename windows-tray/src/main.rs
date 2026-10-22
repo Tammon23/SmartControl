@@ -5,10 +5,28 @@ mod credentials;
 #[cfg(windows)]
 mod panel;
 #[cfg(windows)]
+mod rules;
+#[cfg(windows)]
 mod setup;
+#[cfg(windows)]
+mod startup;
 #[cfg(windows)]
 mod tray;
 fn main() {
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--rules-preview") {
+        if let Some(path) = std::env::args_os().nth(2) {
+            let page = std::env::args()
+                .nth(3)
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(1);
+            if rules::preview(std::path::Path::new(&path), page).is_err() {
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("--preview") {
         if let Some(path) = std::env::args_os().nth(2) {

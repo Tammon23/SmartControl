@@ -32,7 +32,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup target add $env:TARGET --toolchain stable
       - name: Test
-        run: cargo +stable test --locked -p bulb-tray --target $env:TARGET
+        run: cargo +stable test --locked -p bulb-tray -p bulb-server -p bulb-automation --target $env:TARGET
+      - name: Test local-timezone Windows build
+        run: cargo +stable test --locked -p bulb-tray -p bulb-automation --no-default-features --target $env:TARGET
       - name: Build portable executable
         run: cargo +stable build --locked --release -p bulb-tray --target $env:TARGET
       - name: Package

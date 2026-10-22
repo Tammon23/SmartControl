@@ -3,6 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libs
 WORKDIR /source
 COPY Cargo.toml Cargo.lock ./
 COPY server ./server
+COPY automation ./automation
 COPY windows-tray ./windows-tray
 RUN cargo build --locked --release -p bulb-server
 

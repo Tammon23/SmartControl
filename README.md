@@ -8,6 +8,8 @@ Download the Windows ZIP from [Releases](https://github.com/Tammon23/SmartContro
 
 The application uses direct Rust HTTP requests and native sign-in renewal. It has no Node.js, Python, CLI or WebView dependency. On first launch, connect your account in the browser and select a bulb. Credentials are encrypted for your Windows user account. The panel supports a bulb toggle, brightness slider, colour swatches and a saved local name.
 
+Local automations support daily times and sunset offsets, with optional brightness and custom colours. Windows supplies the timezone; sunset coordinates are entered manually. Right-click the tray bulb for the Start at sign-in setting.
+
 ## Build from source
 
 Linux (OpenSSL development headers and pkg-config required):

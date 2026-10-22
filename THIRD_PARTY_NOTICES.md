@@ -1,10 +1,9 @@
 # Third-party notices
 
-Windows binaries include the Rust standard library and libunwind. Their notices are in licenses/. Dependency license files copied from the installed Cargo sources are also retained there. The optional Kindle client and its CA bundle are distributed separately. Node.js, SmartThings CLI, KOReader and LuaSec are separately installed and are not bundled in the Windows executable.
-
-Cargo.lock records all source dependency versions. Other-platform dependency notices remain available through their Cargo source packages at build time.
+Dependency license files are retained in licenses/. Release builds use the Rust standard library and MSVC static runtime; GNU development builds also use libunwind. The Kindle client is distributed separately. Cargo.lock records dependency versions across all targets.
 
 - atomic-waker-1.1.2: Apache-2.0 OR MIT — https://github.com/smol-rs/atomic-waker
+- autocfg-1.5.1: Apache-2.0 OR MIT — https://github.com/cuviper/autocfg
 - axum-0.8.9: MIT — https://github.com/tokio-rs/axum
 - axum-core-0.5.6: MIT — https://github.com/tokio-rs/axum
 - base64-0.22.1: MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
@@ -14,6 +13,8 @@ Cargo.lock records all source dependency versions. Other-platform dependency not
 - bytes-1.12.1: MIT — https://github.com/tokio-rs/bytes
 - cc-1.9.0: MIT OR Apache-2.0 — https://github.com/rust-lang/cc-rs
 - cfg-if-1.0.5: MIT OR Apache-2.0 — https://github.com/rust-lang/cfg-if
+- chrono-0.4.45: MIT OR Apache-2.0 — https://github.com/chronotope/chrono
+- chrono-tz-0.10.4: MIT OR Apache-2.0 — https://github.com/chronotope/chrono-tz
 - core_detect-1.0.0: MIT/Apache-2.0 — https://github.com/thomcc/core_detect
 - cpufeatures-0.2.17: MIT OR Apache-2.0 — https://github.com/RustCrypto/utils
 - crypto-common-0.1.7: MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
@@ -66,8 +67,11 @@ Cargo.lock records all source dependency versions. Other-platform dependency not
 - mio-1.2.4: MIT — https://github.com/tokio-rs/mio
 - multiversion_no_op-1.0.0: Apache-2.0 OR MIT — https://github.com/hsivonen/multiversion_no_op
 - native-tls-0.2.18: MIT OR Apache-2.0 — https://github.com/rust-native-tls/rust-native-tls
+- num-traits-0.2.19: MIT OR Apache-2.0 — https://github.com/rust-num/num-traits
 - once_cell-1.21.4: MIT OR Apache-2.0 — https://github.com/matklad/once_cell
 - percent-encoding-2.3.2: MIT OR Apache-2.0 — https://github.com/servo/rust-url/
+- phf-0.12.1: MIT — https://github.com/rust-phf/rust-phf
+- phf_shared-0.12.1: MIT — https://github.com/rust-phf/rust-phf
 - pin-project-lite-0.2.17: Apache-2.0 OR MIT — https://github.com/taiki-e/pin-project-lite
 - potential_utf-0.1.6: Unicode-3.0 — https://github.com/unicode-org/icu4x
 - ppv-lite86-0.2.21: MIT OR Apache-2.0 — https://github.com/cryptocorrosion/cryptocorrosion
@@ -94,11 +98,13 @@ Cargo.lock records all source dependency versions. Other-platform dependency not
 - sha2-0.10.9: MIT OR Apache-2.0 — https://github.com/RustCrypto/hashes
 - shlex-2.0.1: MIT OR Apache-2.0 — https://github.com/comex/rust-shlex
 - simdutf8-0.1.5: MIT OR Apache-2.0 — https://github.com/rusticstuff/simdutf8
+- siphasher-1.0.4: MIT OR Apache-2.0 — https://github.com/jedisct1/rust-siphash
 - slab-0.4.12: MIT — https://github.com/tokio-rs/slab
 - smallvec-1.16.3: MIT OR Apache-2.0 — https://github.com/servo/rust-smallvec
 - socket2-0.6.5: MIT OR Apache-2.0 — https://github.com/rust-lang/socket2
 - stable_deref_trait-1.2.1: MIT OR Apache-2.0 — https://github.com/storyyeller/stable_deref_trait
 - subtle-2.6.1: BSD-3-Clause — https://github.com/dalek-cryptography/subtle
+- sunrise-3.0.0: MIT — https://github.com/nathan-osman/rust-sunrise
 - syn-3.0.9: MIT OR Apache-2.0 — https://github.com/dtolnay/syn
 - sync_wrapper-1.0.2: Apache-2.0 — https://github.com/Actyx/sync_wrapper
 - synstructure-0.14.0: MIT — https://github.com/mystor/synstructure

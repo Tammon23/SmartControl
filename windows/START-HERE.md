@@ -18,6 +18,8 @@ Launch the app and click Connect account. Your default browser opens the account
 
 Right-click the tray icon and choose Connect / change account to authorize again or select another bulb. Closing setup cancels the attempt. Browser authorization expires after ten minutes, and errors can be retried.
 
+If sign-in renewal fails, the tray panel shows a Reconnect button that opens account setup. Other errors use a Details button to show the full message.
+
 The desktop integration currently uses the provider's public PKCE registration also used by its official CLI. The consent screen may identify that registration as SmartThings CLI. No CLI or Node process is run, and no client secret is embedded. This registration is provider-controlled; an independent production OAuth registration is a separate deployment consideration.
 
 ## Native Rust connection
@@ -32,9 +34,17 @@ If you move the app to another Windows account or computer, connect the account 
 
 Quit the app, change client.json to the structure in client.server.example.json with your HTTPS server URL and the Windows client key, then restart. The server backend also uses Rust. No rebuild is required.
 
+## Local automations
+
+Open the tray panel and click Automations, or right-click the tray icon and choose Local automations. The tray panel keeps its original fixed size. The automations window can be resized by dragging its borders and also supports maximize. Closing Automations destroys that window; opening the tray controls closes any remaining automations window. Text fields keep their edits while resizing. Add a rule for a daily time or an offset from sunset, then choose power, optional brightness and a colour preset or Pick colour. Custom colours are saved with the rule. Black is an off action instead. New rules start disabled. Enter latitude and longitude manually for sunset; the app uses the Windows timezone and does not request your location. Rules are stored separately for each bulb.
+
+The tray app must remain running for local rules to execute. Each rule runs at most once per local day, with a ten-minute catch-up window. Saving or enabling a rule does not immediately run an earlier occurrence. Test actions now sends the selected actions immediately. Cloud failures are not automatically retried. The independent Linux server rules use Toronto time and location.
+
 ## Start at sign-in
 
-Press Win+R, enter shell:startup, and put a shortcut to SmartControl.exe in that folder. No startup entry is installed automatically.
+Right-click the tray bulb, open Settings and click Start at sign-in. A checkmark means the app is registered to start for your Windows account. Click again to remove its startup entry. No administrator access is required, and the setting is not enabled automatically. The running app stays open when you disable startup.
+
+The entry uses the executable's current location and the selected bulb configuration. If you move the executable, switch the setting off and on again from the new location.
 
 ## Measurement
 

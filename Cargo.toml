@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "windows-tray"]
+members = ["server", "windows-tray", "automation"]
 resolver = "2"
 
 [workspace.package]

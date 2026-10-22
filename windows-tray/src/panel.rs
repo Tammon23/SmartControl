@@ -52,6 +52,13 @@ pub(crate) fn rgb(r: u8, g: u8, b: u8) -> u32 {
 fn owner() -> HWND {
     *OWNER.get().unwrap() as HWND
 }
+fn needs_reconnect(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("sign-in")
+        || message.contains("sign in")
+        || message.contains("reconnect")
+        || message.contains("credentials")
+}
 pub fn snapshot() -> Option<Snapshot> {
     VIEW.lock().unwrap().snapshot.clone()
 }
@@ -110,6 +117,8 @@ pub unsafe fn begin_rename() {
     );
     SendMessageW(edit, WM_SETFONT, font as usize, 1);
     SetWindowSubclass(edit, Some(edit_procedure), 1, font as usize);
+    SetPropW(edit, wide("PanelEditFont").as_ptr(), font as HANDLE);
+    layout_rename(window);
     SendMessageW(edit, EM_SETLIMITTEXT, 120, 0);
     SetFocus(edit);
     SendMessageW(edit, EM_SETSEL, 0, -1);
@@ -119,6 +128,45 @@ unsafe fn close_rename(hwnd: HWND) {
     VIEW.lock().unwrap().renaming = false;
     SetFocus(hwnd);
     InvalidateRect(hwnd, null(), 0);
+}
+unsafe fn layout_rename(hwnd: HWND) {
+    let edit = GetDlgItem(hwnd, 900);
+    if edit.is_null() {
+        return;
+    }
+    let mut bounds: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut bounds);
+    MoveWindow(
+        edit,
+        36 * bounds.right / WIDTH,
+        166 * bounds.bottom / HEIGHT,
+        288 * bounds.right / WIDTH,
+        28 * bounds.bottom / HEIGHT,
+        1,
+    );
+    let font = CreateFontW(
+        -18 * bounds.bottom / HEIGHT,
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET as u32,
+        0,
+        0,
+        CLEARTYPE_QUALITY as u32,
+        0,
+        wide("Segoe UI").as_ptr(),
+    );
+    let old = GetPropW(edit, wide("PanelEditFont").as_ptr());
+    SetPropW(edit, wide("PanelEditFont").as_ptr(), font as HANDLE);
+    SetWindowSubclass(edit, Some(edit_procedure), 1, font as usize);
+    SendMessageW(edit, WM_SETFONT, font as usize, 1);
+    if !old.is_null() {
+        DeleteObject(old as HGDIOBJ);
+    }
 }
 fn previous_word_start(text: &[u16], caret: usize) -> usize {
     let caret = caret.min(text.len());
@@ -138,7 +186,7 @@ fn previous_word_start(text: &[u16], caret: usize) -> usize {
     }
     chars.iter().map(|c| c.len_utf16()).sum()
 }
-unsafe extern "system" fn edit_procedure(
+pub(crate) unsafe extern "system" fn edit_procedure(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
@@ -148,6 +196,17 @@ unsafe extern "system" fn edit_procedure(
 ) -> LRESULT {
     if message == WM_KEYDOWN {
         let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
+        if wparam == VK_TAB as usize {
+            let next = GetNextDlgTabItem(
+                GetParent(hwnd),
+                hwnd,
+                (GetKeyState(VK_SHIFT as i32) < 0) as i32,
+            );
+            if !next.is_null() {
+                SetFocus(next);
+            }
+            return 0;
+        }
         if wparam == VK_BACK as usize && ctrl {
             let (mut start, mut end) = (0u32, 0u32);
             SendMessageW(
@@ -185,7 +244,7 @@ unsafe extern "system" fn edit_procedure(
         }
     }
     if message == WM_CHAR
-        && ([0x7f, 0x0d, 0x1b, 0x01].contains(&wparam)
+        && ([0x7f, 0x0d, 0x1b, 0x01, 0x09].contains(&wparam)
             || (wparam == 8 && GetKeyState(VK_CONTROL as i32) < 0))
     {
         return 0;
@@ -686,19 +745,42 @@ unsafe fn content(dc: HDC, w: i32, h: i32) {
     } else {
         &view.message
     };
+    fill(dc, rect(24, 416, 166, 448), rgb(36, 43, 57), 8);
     text(
         dc,
-        note,
-        rect(24, 421, 282, 455),
-        11,
-        400,
-        if view.failed {
-            rgb(255, 133, 133)
-        } else {
-            secondary
-        },
-        DT_WORDBREAK,
+        "Automations",
+        rect(24, 416, 166, 448),
+        13,
+        600,
+        foreground,
+        DT_SINGLELINE | DT_CENTER | DT_VCENTER,
     );
+    if view.failed {
+        fill(dc, rect(178, 416, 286, 448), rgb(66, 40, 46), 8);
+        text(
+            dc,
+            if needs_reconnect(note) {
+                "Reconnect"
+            } else {
+                "Details"
+            },
+            rect(178, 416, 286, 448),
+            13,
+            600,
+            rgb(255, 170, 170),
+            DT_SINGLELINE | DT_CENTER | DT_VCENTER,
+        );
+    } else {
+        text(
+            dc,
+            note,
+            rect(178, 421, 282, 455),
+            11,
+            400,
+            secondary,
+            DT_WORDBREAK,
+        );
+    }
     text(
         dc,
         "↻",
@@ -790,6 +872,24 @@ unsafe extern "system" fn procedure(
             }
             0
         }
+        WM_SIZE => {
+            layout_rename(hwnd);
+            let mut bounds: RECT = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut bounds);
+            let region = CreateRoundRectRgn(
+                0,
+                0,
+                bounds.right - bounds.left + 1,
+                bounds.bottom - bounds.top + 1,
+                20,
+                20,
+            );
+            if !region.is_null() {
+                SetWindowRgn(hwnd, region, 1);
+            }
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
         WM_ERASEBKGND => 1,
         WM_CLOSE => {
             ShowWindow(hwnd, SW_HIDE);
@@ -853,6 +953,39 @@ unsafe extern "system" fn procedure(
                         );
                     }
                 }
+            } else if (24..=166).contains(&x) && (416..=448).contains(&y) {
+                if let Err(error) = crate::rules::show(owner()) {
+                    MessageBoxW(
+                        hwnd,
+                        wide(&error).as_ptr(),
+                        wide("Automations").as_ptr(),
+                        MB_OK | MB_ICONERROR,
+                    );
+                }
+            } else if (178..=286).contains(&x) && (416..=448).contains(&y) {
+                let error = {
+                    let view = VIEW.lock().unwrap();
+                    view.failed.then(|| view.message.clone())
+                };
+                if let Some(error) = error {
+                    if needs_reconnect(&error) {
+                        if let Err(error) = crate::tray::connect_account(owner()) {
+                            MessageBoxW(
+                                hwnd,
+                                wide(&error).as_ptr(),
+                                wide("Account connection").as_ptr(),
+                                MB_OK | MB_ICONERROR,
+                            );
+                        }
+                    } else {
+                        MessageBoxW(
+                            hwnd,
+                            wide(&error).as_ptr(),
+                            wide("SmartControl").as_ptr(),
+                            MB_OK | MB_ICONERROR,
+                        );
+                    }
+                }
             } else if x >= 290 && y >= 414 {
                 crate::tray::enqueue(owner(), Action::Refresh);
             }
@@ -901,6 +1034,11 @@ pub fn preview(path: &std::path::Path) -> Result<(), String> {
         v.label = "A19 - Color".into();
         v.message = "Connected".into();
         v.renaming = std::env::args().any(|a| a == "--rename-preview");
+        if std::env::args().any(|a| a == "--auth-preview") {
+            v.failed = true;
+            v.message = "Sign-in renewal failed. Reconnect your account.".into();
+        }
+
         v.snapshot = Some(Snapshot {
             power: Some(true),
             brightness: Some(50),

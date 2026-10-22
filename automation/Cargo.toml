@@ -1,0 +1,18 @@
+[package]
+name = "bulb-automation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["iana"]
+iana = ["dep:chrono-tz"]
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.10", optional = true }
+sunrise = "3"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

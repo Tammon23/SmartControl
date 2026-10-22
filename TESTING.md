@@ -47,3 +47,49 @@ Nine Windows release tests passed. New tests verify the RFC 7636 PKCE challenge,
 ## Colour responsiveness update
 
 Thirteen native tray tests and eight server tests passed. New coverage checks single colour command payloads, accepted-result validation, queued latest colour selection without losing other controls, stale readback rejection, colour/white mode inference and server request sequencing. The user confirmed controlled green-to-blue changes and then rapid tray green/blue/red selections: the bulb and icon matched and controls stayed responsive. Sampled cloud requests returned HTTP 200, with no observed rate-limit response in these tests. The native client now reports HTTP 429 cooldowns, bounds confirmation polling and schedules one later refresh when needed. Oracle deployment remains unperformed.
+
+## Daily automation update
+
+The shared scheduler passed five tests covering validation, sunset scheduling, daylight-saving transitions and once-per-day execution. Fifteen tray tests and eleven server tests passed in the release profile. New coverage includes action ordering and durable server claims that prevent replay after failure or restart. New rules are disabled by default. The native automation editor preview was visually inspected; interactive editor testing remains pending. CI now runs all three crates' tests. No v0.1.1 release has been published.
+
+## Resizing and custom automation colours
+
+Follow-up: the tray panel was restored to its original fixed size at the user's
+request. Only Automations is resizable. Opening the tray controls explicitly
+destroys any remaining automations window. The native close test covers both
+WM_CLOSE and repeated programmatic closure, and the user confirmed the desired
+window behaviour. The following font/reconnect update passed all 34 Rust tests;
+rendered editor and sign-in-error previews were visually inspected, launch checks
+passed, and the local app was replaced and restarted. Automation text and fields
+are larger. Sign-in errors expose Reconnect; other errors expose full Details.
+
+Seventeen tray tests, six scheduler tests and eleven server tests passed. A native hidden-window test resizes the rule editor and verifies that edit contents and selection survive. The same native check was rerun with WM_CLOSE and verified destruction plus clearing the cached window handle. Custom RGB actions round-trip through settings, reject conflicting presets/black/off combinations, run before final brightness, and execute through the server's demo scheduler. Both native windows now resize, the tray panel opens Automations directly, and rule actions expose a native colour picker. Rendered previews were visually inspected, launch checks passed, and the local tray app was replaced and restarted. The Oracle runtime has not been updated for the custom RGB schedule field. Physical rule execution and live UI interaction still need user confirmation.
+
+## Start at sign-in setting
+
+The tray Settings submenu now has a checked Start at sign-in toggle. It registers
+or removes only SmartControl's named per-user Run value, preserving the executable
+and configuration paths. Nineteen tray tests, six scheduler tests and eleven
+server tests passed. New tests use an isolated temporary registry key to verify
+enable/disable, repeated removal and preservation of unrelated values, plus
+Windows command-line parsing with spaces and Unicode. The user's actual startup
+entry was absent and was not enabled during testing. A real sign-out/sign-in
+cycle has not been performed.
+
+## v0.1.1 size and runtime review
+
+The Windows-only scheduler now uses the operating system's local timezone without
+bundling chrono-tz's world timezone database. The server retains its IANA timezone
+support. All 37 workspace tests passed, plus the isolated Windows/local-timezone
+configuration (19 tray tests and one scheduler test). No cloud polling intervals
+or command pacing were shortened.
+
+On this PC, the GNU/LLVM executable decreased from 2,926,592 to 1,664,512 bytes
+(43.1%). The previous running app sampled at 14.68 MiB working set; the freshly
+started optimized app sampled at 11.31 MiB, with 2.56 MiB private memory. These are
+observations with different process histories, not a controlled RAM benchmark.
+The optimized process accumulated 0 ms CPU over a 12.02-second idle sample and
+93.75 ms CPU through its first three seconds after startup. A separate read-only
+status request took 0.466 seconds wall time, 62.5 ms CPU and approximately 9.68 MiB
+sampled peak working set; it did not change the bulb. Public releases use MSVC,
+so their exact file size and memory usage can differ from these local GNU builds.

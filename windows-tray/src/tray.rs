@@ -17,6 +17,7 @@ use windows_sys::Win32::{
 
 const TRAY: u32 = WM_APP + 1;
 const RESULT: u32 = WM_APP + 2;
+pub(crate) const AUTOMATION: u32 = WM_APP + 3;
 static CHOOSING: AtomicBool = AtomicBool::new(false);
 static PENDING: Mutex<crate::control::Pending> = Mutex::new(crate::control::Pending::new());
 static JOBS: OnceLock<SyncSender<Action>> = OnceLock::new();
@@ -129,6 +130,19 @@ unsafe fn popup(hwnd: HWND) {
     let menu = CreatePopupMenu();
     let brightness = CreatePopupMenu();
     let colours = CreatePopupMenu();
+    let settings = CreatePopupMenu();
+    let startup = crate::startup::enabled();
+    AppendMenuW(
+        settings,
+        MF_STRING
+            | if startup.as_ref().copied().unwrap_or(false) {
+                MF_CHECKED
+            } else {
+                MF_UNCHECKED
+            },
+        9,
+        wide("Start at sign-in").as_ptr(),
+    );
     add(
         menu,
         1,
@@ -162,6 +176,8 @@ unsafe fn popup(hwnd: HWND) {
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     add(menu, 6, "Rename bulb...");
     add(menu, 7, "Connect / change account...");
+    add(menu, 8, "Local automations...");
+    AppendMenuW(menu, MF_POPUP, settings as usize, wide("Settings").as_ptr());
     add(menu, 3, "Read status");
     add(menu, 4, "About / connection");
     add(menu, 5, "Quit");
@@ -182,20 +198,27 @@ unsafe fn popup(hwnd: HWND) {
     let action = match id {
         1 => Some(Action::Toggle),
         2 => Some(Action::Power(false)),
+        9 => {
+            let result = startup.and_then(|enabled| {
+                crate::startup::set_enabled(
+                    !enabled,
+                    CONFIG_PATH.get().ok_or("Configuration unavailable")?,
+                )
+            });
+            if let Err(error) = result {
+                show_error(&error);
+            }
+            None
+        }
+        8 => {
+            if let Err(error) = crate::rules::show(hwnd) {
+                show_error(&error);
+            }
+            None
+        }
         7 => {
-            if let Ok(exe) = std::env::current_exe() {
-                use std::os::windows::process::CommandExt;
-                let mut command = std::process::Command::new(exe);
-                command.arg("--setup");
-                if let Some(path) = CONFIG_PATH.get() {
-                    command.arg(path);
-                }
-                match command.creation_flags(0x08000000).spawn() {
-                    Ok(_) => {
-                        DestroyWindow(hwnd);
-                    }
-                    Err(_) => show_error("Cannot open account setup"),
-                }
+            if let Err(error) = connect_account(hwnd) {
+                show_error(&error);
             }
             None
         }
@@ -230,13 +253,32 @@ unsafe fn popup(hwnd: HWND) {
 pub fn choosing_colour() -> bool {
     CHOOSING.load(Ordering::Relaxed)
 }
+pub unsafe fn connect_account(hwnd: HWND) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let exe = std::env::current_exe().map_err(|_| "Cannot locate account setup")?;
+    let mut command = std::process::Command::new(exe);
+    command.arg("--setup");
+    if let Some(path) = CONFIG_PATH.get() {
+        command.arg(path);
+    }
+    command
+        .creation_flags(0x08000000)
+        .spawn()
+        .map_err(|_| "Cannot open account setup")?;
+    DestroyWindow(hwnd);
+    Ok(())
+}
 pub unsafe fn choose_colour(hwnd: HWND) -> Option<Action> {
+    choose_colour_from(hwnd, crate::panel::snapshot().unwrap_or_default().rgb())
+}
+pub unsafe fn choose_colour_from(hwnd: HWND, initial: (u8, u8, u8)) -> Option<Action> {
     CHOOSING.store(true, Ordering::Relaxed);
     let mut custom = [0u32; 16];
     let mut choose: CHOOSECOLORW = std::mem::zeroed();
     choose.lStructSize = size_of::<CHOOSECOLORW>() as u32;
     choose.hwndOwner = hwnd;
     choose.lpCustColors = custom.as_mut_ptr();
+    choose.rgbResult = initial.0 as u32 | ((initial.1 as u32) << 8) | ((initial.2 as u32) << 16);
     choose.Flags = CC_FULLOPEN | CC_RGBINIT;
     let selected = ChooseColorW(&mut choose) != 0;
     CHOOSING.store(false, Ordering::Relaxed);
@@ -289,11 +331,19 @@ unsafe extern "system" fn wndproc(
 ) -> LRESULT {
     match message {
         TRAY if lparam as u32 == WM_LBUTTONUP => {
+            crate::rules::close();
             crate::panel::toggle_visibility();
             0
         }
         TRAY if lparam as u32 == WM_RBUTTONUP => {
             popup(hwnd);
+            0
+        }
+        AUTOMATION => {
+            let actions = Box::from_raw(lparam as *mut Vec<Action>);
+            for action in *actions {
+                enqueue(hwnd, action);
+            }
             0
         }
         RESULT => {
@@ -436,6 +486,9 @@ pub fn run() -> Result<(), String> {
         JOBS.set(tx)
             .map_err(|_| "Request worker already initialized")?;
         crate::panel::create(hwnd, &config.label)?;
+        if let Err(error) = crate::rules::start(hwnd, &config) {
+            show_error(&error);
+        }
         let hwnd_value = hwnd as usize;
         std::thread::spawn(move || {
             let mut previous = None::<crate::backend::Snapshot>;

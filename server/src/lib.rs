@@ -18,6 +18,7 @@ use std::{
 };
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
+mod automation;
 
 pub type Error = (StatusCode, Json<Value>);
 fn fail(code: StatusCode, message: &str) -> Error {
@@ -145,6 +146,7 @@ pub struct App {
     demo: Mutex<BulbState>,
     commands: Mutex<()>,
     pending: Mutex<HashMap<String, u64>>,
+    automation: Mutex<automation::Store>,
 }
 
 impl App {
@@ -202,6 +204,7 @@ impl App {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Cannot create HTTP client")?;
+        let automation = automation::Store::load(&config.tokens_file).await?;
         Ok(Arc::new(Self {
             config,
             http,
@@ -210,6 +213,7 @@ impl App {
             demo: Mutex::new(BulbState::default()),
             commands: Mutex::new(()),
             pending: Mutex::new(HashMap::new()),
+            automation: Mutex::new(automation),
         }))
     }
 
@@ -461,13 +465,17 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/bulb/colour", post(colour))
         .route("/api/bulb/temperature", post(temperature))
         .route("/api/bulb/preset", post(preset))
+        .route(
+            "/api/automations",
+            get(automation::get_settings).put(automation::put_settings),
+        )
         .layer(middleware::from_fn_with_state(app.clone(), protect));
     Router::new()
         .merge(protected)
         .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
         .route("/admin/oauth/start", post(oauth_start))
         .route("/oauth/callback", get(oauth_callback))
-        .layer(axum::extract::DefaultBodyLimit::max(4096))
+        .layer(axum::extract::DefaultBodyLimit::max(16384))
         .with_state(app)
 }
 #[derive(Deserialize)]
@@ -592,19 +600,21 @@ async fn temperature(
     .await
 }
 async fn preset(State(app): State<Arc<App>>, Json(p): Json<Preset>) -> Result<Json<Value>, Error> {
-    let commands = match p.name.as_str() {
-        "red" => rgb_commands(&app, 255, 0, 0),
-        "green" => rgb_commands(&app, 0, 255, 0),
-        "blue" => rgb_commands(&app, 0, 0, 255),
-        "purple" => rgb_commands(&app, 180, 0, 255),
+    app.send_colour(preset_commands(&app, &p.name)?).await
+}
+fn preset_commands(app: &App, name: &str) -> Result<Vec<Value>, Error> {
+    Ok(match name {
+        "red" => rgb_commands(app, 255, 0, 0),
+        "green" => rgb_commands(app, 0, 255, 0),
+        "blue" => rgb_commands(app, 0, 0, 255),
+        "purple" => rgb_commands(app, 180, 0, 255),
         "warm" | "white" => vec![app.command(
             "colorTemperature",
             "setColorTemperature",
-            vec![json!(if p.name == "warm" { 2700 } else { 5000 })],
+            vec![json!(if name == "warm" { 2700 } else { 5000 })],
         )],
         _ => return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, "Unknown preset")),
-    };
-    app.send_colour(commands).await
+    })
 }
 fn normalize(value: &Value) -> BulbState {
     let attr = |cap: &str, name: &str| value.get(cap).and_then(|v| v.get(name));

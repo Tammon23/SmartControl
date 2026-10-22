@@ -4,6 +4,110 @@ use http_body_util::BodyExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
+fn scheduled_settings() -> Value {
+    json!({"timezone":"America/Toronto","latitude":43.6532,"longitude":-79.3832,
+        "rules":[{"id":"scheduled","name":"Afternoon","enabled":true,
+            "trigger":{"type":"time","hour":13,"minute":30},"action":{"power":true,"brightness":37,"colour":[0,0,255]}}]})
+}
+
+#[tokio::test]
+async fn automation_api_claims_survive_restart_and_saves_never_fire() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = config(dir.path());
+    let app = App::new(c.clone()).await.unwrap();
+    let key = "k".repeat(32);
+    assert_eq!(
+        request(app.clone(), "GET", "/api/automations", "bad", Value::Null)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let initial = request(app.clone(), "GET", "/api/automations", &key, Value::Null)
+        .await
+        .1;
+    assert_eq!(initial["settings"]["timezone"], "America/Toronto");
+    assert!(initial["settings"]["rules"].as_array().unwrap().is_empty());
+    assert_eq!(
+        request(
+            app.clone(),
+            "PUT",
+            "/api/automations",
+            &key,
+            scheduled_settings()
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(app.read(true).await.unwrap().power, Some(false));
+    // 2030-01-15 13:30 Toronto, independent of host timezone and current clock.
+    let settings: bulb_automation::Settings = serde_json::from_value(scheduled_settings()).unwrap();
+    let at = bulb_automation::preview(&settings, &settings.rules[0], 1_894_665_600)
+        .unwrap()
+        .unwrap();
+    app.automation_tick(at + 30).await;
+    assert_eq!(app.read(true).await.unwrap().brightness, Some(37));
+    assert!((app.read(true).await.unwrap().hue.unwrap() - 66.6667).abs() < 0.001);
+    let reply = request(app.clone(), "GET", "/api/automations", &key, Value::Null)
+        .await
+        .1;
+    assert_eq!(reply["results"][0]["status"], "accepted");
+    // Change state after execution; loading and ticking the same occurrence must not repeat it.
+    request(app, "POST", "/api/bulb/power", &key, json!({"on":false})).await;
+    let restarted = App::new(c).await.unwrap();
+    restarted.automation_tick(at + 60).await;
+    assert_eq!(restarted.read(true).await.unwrap().power, Some(false));
+    assert_eq!(
+        request(restarted, "GET", "/api/automations", &key, Value::Null)
+            .await
+            .1["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn automation_requires_persisted_claim_and_valid_toronto_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::new(config(dir.path())).await.unwrap();
+    let key = "k".repeat(32);
+    let mut bad = scheduled_settings();
+    bad["timezone"] = json!("local");
+    assert_eq!(
+        request(app.clone(), "PUT", "/api/automations", &key, bad)
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut bad = scheduled_settings();
+    bad["rules"][0]["action"]["power"] = json!(false);
+    assert_eq!(
+        request(app.clone(), "PUT", "/api/automations", &key, bad)
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    request(
+        app.clone(),
+        "PUT",
+        "/api/automations",
+        &key,
+        scheduled_settings(),
+    )
+    .await;
+    // Simulate an unwritable claim target. It must fail closed before bulb IO.
+    std::fs::write(dir.path().join("blocked"), b"not a directory").unwrap();
+    app.automation.lock().await.path = dir.path().join("blocked").join("claim.json");
+    let settings: bulb_automation::Settings = serde_json::from_value(scheduled_settings()).unwrap();
+    let at = bulb_automation::preview(&settings, &settings.rules[0], 1_894_665_600)
+        .unwrap()
+        .unwrap();
+    app.automation_tick(at).await;
+    assert_eq!(app.read(true).await.unwrap().power, Some(false));
+}
+
 fn config(dir: &std::path::Path) -> Config {
     serde_json::from_value(json!({"demo":true,"clients":[{"name":"windows","token":"w".repeat(32)},{"name":"kindle","token":"k".repeat(32)}],"admin_token":"a".repeat(32),"device_id":"00000000-0000-0000-0000-000000000000","tokens_file":dir.join("tokens.json")})).unwrap()
 }
@@ -248,6 +352,53 @@ async fn oauth_refresh_is_persisted_and_only_one_refresh_is_used() {
     let persisted: Tokens = serde_json::from_slice(&tokio::fs::read(file).await.unwrap()).unwrap();
     assert_eq!(persisted.refresh_token.as_deref(), Some("rotated-refresh"));
     assert_eq!(persisted.access_token, "new-access");
+    task.abort();
+}
+
+#[tokio::test]
+async fn failed_scheduled_actions_are_claimed_and_never_retried_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let (url, mock, task) = mock_upstream().await;
+    let mut c = config(dir.path());
+    c.demo = false;
+    c.smartthings_base = url;
+    tokio::fs::write(
+        &c.tokens_file,
+        serde_json::to_vec(&Tokens {
+            access_token: "new-access".into(),
+            refresh_token: None,
+            expires_at: now() + 86400,
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let app = App::new(c.clone()).await.unwrap();
+    let key = "k".repeat(32);
+    request(
+        app.clone(),
+        "PUT",
+        "/api/automations",
+        &key,
+        scheduled_settings(),
+    )
+    .await;
+    mock.reject.store(true, Ordering::SeqCst);
+    let settings: bulb_automation::Settings = serde_json::from_value(scheduled_settings()).unwrap();
+    let at = bulb_automation::preview(&settings, &settings.rules[0], 1_894_665_600)
+        .unwrap()
+        .unwrap();
+    app.automation_tick(at).await;
+    assert_eq!(mock.commands.lock().await.len(), 1); // Rejected power request: no level follows.
+    assert_eq!(
+        request(app, "GET", "/api/automations", &key, Value::Null)
+            .await
+            .1["results"][0]["status"],
+        "failed"
+    );
+    let restarted = App::new(c).await.unwrap();
+    restarted.automation_tick(at + 30).await;
+    assert_eq!(mock.commands.lock().await.len(), 1);
     task.abort();
 }
 

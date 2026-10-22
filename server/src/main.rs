@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = config.bind.clone();
     let demo = config.demo;
     let app = App::new(config).await.map_err(std::io::Error::other)?;
+    let automation_task = app.start_automations();
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     println!(
         "Bulb Bridge listening on {} ({})",
@@ -49,5 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;
+    automation_task.abort();
     Ok(())
 }
